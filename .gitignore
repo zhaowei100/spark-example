@@ -1,0 +1,5 @@
+.settings/
+spark-warehouse/
+target/
+.classpath
+.project
