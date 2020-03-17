@@ -2,6 +2,7 @@ package scirichon.echo.spark;
 
 import java.util.Arrays;
 import java.util.Iterator;
+import java.util.Properties;
 
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaPairRDD;
@@ -14,17 +15,15 @@ import org.apache.spark.api.java.function.PairFunction;
 import org.apache.spark.api.java.function.VoidFunction;
 import org.apache.spark.sql.Column;
 import org.apache.spark.sql.Dataset;
-import org.apache.spark.sql.Encoder;
 import org.apache.spark.sql.Row;
+import org.apache.spark.sql.SaveMode;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.Metadata;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 
-import scala.Function1;
 import scala.Tuple2;
-import scala.reflect.ClassTag;
 import scirichon.echo.spark.vo.TbDate;
 import scirichon.echo.spark.vo.TbStock;
 import scirichon.echo.spark.vo.TbStockDetail;
@@ -37,7 +36,9 @@ public class SparkExample {
 
 //		s3select(conf);
 
-		execise(conf);
+//		execise(conf);
+		
+		jdbc(conf);
 
 //		localDataSet(conf);
 
@@ -45,11 +46,39 @@ public class SparkExample {
 
 	}
 
+	private static void jdbc(SparkConf conf) {
+		SparkSession session = minioSession(conf);
+		String url = "jdbc:mysql://192.168.5.129:3306/echo?useUnicode=true&characterEncoding=utf-8&useSSL=false&serverTimezone=UTC";
+//		String table = "echo_lecture";
+		String table ="(select article_basicid, article_author, article_content from cms_article) as abc";
+		Properties properties = new Properties();
+		properties.put("user", "root");
+		properties.put("password", "mysql");
+//		properties.put("dbtalbe", "select id, classes_id from echo_lecture");
+		Dataset<Row> dataset = session.read().jdbc(url, table, properties);
+		dataset.printSchema();
+		dataset.show();
+		dataset.createOrReplaceTempView("abc");
+		
+		Dataset<Row> dataset2 = session.sql("select article_basicid, article_author from abc");
+		dataset2.printSchema();
+		dataset2.show();
+		// 如果没有SaveMode.Append，那么如果存在文件夹，则无法保存，如果有SaveMode.Append，那么会在目录下生成新的文件
+		dataset2.write().mode(SaveMode.Append).option("header", "true").csv("s3a://mycsvbucket/sampledata/jdbc_to_csv");
+		dataset2.write().mode(SaveMode.Append).json("s3a://mycsvbucket/sampledata/jdbc_to_json");
+		String table2 = "spark_test";
+		
+		dataset2.write().mode(SaveMode.Append).jdbc(url, table2, properties);
+	}
+	
 	private static void execise(SparkConf conf) {
 		SparkSession session = minioSession(conf);
 
 		Dataset<String> tbStockSet = session.read().textFile("s3a://mycsvbucket/sampledata/execise/tbStock.txt");
-		Dataset<String> tbDateSet = session.read().textFile("s3a://mycsvbucket/sampledata/execise/tbDate.txt");
+//		Dataset<String> tbDateSet = session.read().textFile("s3a://mycsvbucket/sampledata/execise/tbDate.txt");
+		// 多文件读取
+		Dataset<String> tbDateSet = session.read().textFile("s3a://mycsvbucket/sampledata/execise/tbDate1.txt",
+				"s3a://mycsvbucket/sampledata/execise/tbDate2.txt");
 		Dataset<String> tbStockDetailSet = session.read()
 				.textFile("s3a://mycsvbucket/sampledata/execise/tbStockDetail.txt");
 
@@ -69,7 +98,7 @@ public class SparkExample {
 		Dataset<Row> tbstockDataset = session.createDataFrame(tbStockRdd, TbStock.class);
 		tbstockDataset.printSchema();
 		tbstockDataset.show();
-		
+
 		// 读取表2
 		JavaRDD<TbDate> tbDateRdd = tbDateSet.javaRDD().map(new Function<String, TbDate>() {
 
@@ -93,7 +122,7 @@ public class SparkExample {
 		Dataset<Row> tbdataDataset = session.createDataFrame(tbDateRdd, TbDate.class);
 		tbdataDataset.printSchema();
 		tbdataDataset.show();
-		
+
 		// 读取表3
 		JavaRDD<TbStockDetail> detailRdd = tbStockDetailSet.javaRDD().map(new Function<String, TbStockDetail>() {
 
@@ -110,16 +139,23 @@ public class SparkExample {
 				return tbStockDetail;
 			}
 		});
-		
+
 		Dataset<Row> detailDataset = session.createDataFrame(detailRdd, TbStockDetail.class);
 		detailDataset.printSchema();
 		detailDataset.show();
-		
+
 		// 注册表
 		tbstockDataset.createOrReplaceTempView("tbStock");
 		tbdataDataset.createOrReplaceTempView("tbDate");
 		detailDataset.createOrReplaceTempView("tbStockDetail");
-		
+//		String sqlString = "SELECT c.theYear, COUNT(DISTINCT a.orderNumber), "
+//				+ "SUM(b.amount) FROM tbStock a JOIN tbStockDetail b ON a.orderNumber = "
+//				+ "b.orderNumber JOIN tbDate c ON a.dateId = c.dateId GROUP BY c.theYear ORDER BY c.theYear";
+		// sql中对字段大小写不敏感
+		String sqlString = "SELECT c.theyear, COUNT(DISTINCT a.ordernumber), "
+				+ "SUM(b.amount) FROM tbStock a JOIN tbStockDetail b ON a.ordernumber = "
+				+ "b.ordernumber JOIN tbDate c ON a.dateid = c.dateid GROUP BY c.theyear ORDER BY c.theyear";
+		session.sql(sqlString).show();
 		
 		session.stop();
 	}
